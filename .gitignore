@@ -338,3 +338,6 @@ exclude_dll.txt
 
 # clangd index
 .cache/
+
+arm-linux-androideabi-21-release/
+.gradle/

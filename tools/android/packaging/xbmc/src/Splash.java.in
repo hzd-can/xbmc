@@ -29,6 +29,7 @@ import android.util.Log;
 import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.net.ConnectivityManager;
 
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -66,6 +67,8 @@ public class Splash extends Activity
   private static final int CheckingPermissionsInfo = 11;
   private static final int CheckExternalStorage = 12;
   private static final int RecordAudioPermission = 13;
+  private static final int NetworkReady = 14;
+  private static final int CheckingNetwork = 15;
   private static final int StartingXBMC = 99;
 
   private static final String TAG = "@APP_NAME@";
@@ -231,9 +234,13 @@ public class Splash extends Activity
           }
 
           break;
+        case NetworkReady:
+          sendEmptyMessage(StartingXBMC);
+          break;
         case StartingXBMC:
-          mSplash.mTextView.setText("Starting @APP_NAME@...");
-          mSplash.mProgress.setVisibility(View.INVISIBLE);
+          //mSplash.mTextView.setText("启动 @APP_NAME@...");
+          mSplash.mTextView.setVisibility(View.GONE);
+          mSplash.mProgress.setVisibility(View.GONE);
           mSplash.startXBMC();
           break;
         default:
@@ -243,6 +250,84 @@ public class Splash extends Activity
   }
 
   private StateMachine mStateMachine = new StateMachine(this);
+
+  private class WaitNet
+  {
+    private Splash mSplash = null;
+    private int mProgressStatus = 0;
+    private ExecutorService executor;
+    private Handler handler;
+
+    public WaitNet(Splash splash)
+    {
+      mSplash = splash;
+      executor = Executors.newSingleThreadExecutor();
+      handler = new Handler(Looper.getMainLooper());
+    }
+
+    public void execute()
+    {
+      executor.execute(() -> {
+        Integer result = doInBackground();
+        handler.post(() -> onPostExecute(result));
+      });
+    }
+
+    protected void publishProgress(Integer value)
+    {
+      handler.post(() -> onProgressUpdate(value));
+    }
+
+    protected Integer doInBackground()
+    {
+      int maxCount = 50;
+      ConnectivityManager connectivityManager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+      mProgress.setMax(maxCount);
+      mProgress.setProgress(0);
+
+      mState = CheckingNetwork;
+      publishProgress(mProgressStatus);
+      while(null == connectivityManager.getActiveNetworkInfo()){
+        if(mProgressStatus++ >= maxCount) break;
+        publishProgress(mProgressStatus);
+
+        try {
+          Thread.sleep(100);
+        } catch (InterruptedException e) {
+          e.printStackTrace();
+        } 
+      }
+
+      mState = NetworkReady;
+      publishProgress(0);
+      return 0;
+    }
+
+    protected void onProgressUpdate(Integer value)
+    {
+      switch (mState)
+      {
+        case CheckingNetwork:
+          //mSplash.mTextView.setText("等待网络连接... " + value);
+          mSplash.mProgress.setVisibility(View.VISIBLE);
+          mSplash.mProgress.setProgress(value);
+          break;
+        case NetworkReady:
+          mSplash.mProgress.setVisibility(View.INVISIBLE);
+          break;
+      }
+    }
+
+    protected void onPostExecute(Integer result)
+    {
+      if (result < 0)
+      {
+        mState = InError;
+      }
+
+      mStateMachine.sendEmptyMessage(mState);
+    }
+  }
 
   private class FillCache
   {
@@ -721,6 +806,28 @@ public class Splash extends Activity
     finish();
   }
 
+  private boolean mNoDisplay = true;
+  @Override
+  public void setTheme( int resid) {
+    // Check if @APP_NAME@ is not already running
+    ActivityManager activityManager = (ActivityManager) getBaseContext()
+    .getSystemService(Context.ACTIVITY_SERVICE);
+    List<RunningTaskInfo> tasks = activityManager
+        .getRunningTasks(Integer.MAX_VALUE);
+    for (RunningTaskInfo task : tasks)
+    if (task.topActivity.toString().equalsIgnoreCase(
+          "ComponentInfo{@APP_PACKAGE@/@APP_PACKAGE@.Main}"))
+    {
+    // @APP_NAME@ already running; just activate it
+      super.setTheme(resid);
+      mNoDisplay = true;
+    }
+    else{
+      super.setTheme(android.R.style.Theme_NoTitleBar_Fullscreen);
+      mNoDisplay = false;
+    }
+  }
+
   @Override
   public void onCreate(Bundle savedInstanceState)
   {
@@ -729,19 +836,10 @@ public class Splash extends Activity
     // Be sure properties are initialized for native
     XBMCProperties.initializeProperties();
 
-    // Check if @APP_NAME@ is not already running
-    ActivityManager activityManager = (ActivityManager) getBaseContext()
-            .getSystemService(Context.ACTIVITY_SERVICE);
-    List<RunningTaskInfo> tasks = activityManager
-            .getRunningTasks(Integer.MAX_VALUE);
-    for (RunningTaskInfo task : tasks)
-      if (task.topActivity.toString().equalsIgnoreCase(
-              "ComponentInfo{@APP_PACKAGE@/@APP_PACKAGE@.Main}"))
-      {
-        // @APP_NAME@ already running; just activate it
-        startXBMC();
-        return;
-      }
+    if(mNoDisplay){
+      startXBMC();
+      return;
+    }
 
     mStateMachine.sendEmptyMessage(Checking);
 
@@ -838,7 +936,10 @@ public class Splash extends Activity
       }
     }
 
-    if (mState != InError && mCachingDone && mExternalStorageChecked && mPermissionOK)
+    ConnectivityManager connectivityManager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+    boolean bNetReady = connectivityManager.getActiveNetworkInfo() != null;
+
+    if (bNetReady && mState != InError && mCachingDone && mExternalStorageChecked && mPermissionOK)
     {
       startXBMC();
       return;
@@ -863,6 +964,10 @@ public class Splash extends Activity
     {
       if (!mCachingDone)
         new FillCache(this).execute();
+      else if (!bNetReady){
+        new WaitNet(this).execute();
+        mStateMachine.sendEmptyMessage(CheckingNetwork);
+      }
       else
         mStateMachine.sendEmptyMessage(CachingDone);
     }
