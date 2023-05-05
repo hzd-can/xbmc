@@ -261,8 +261,16 @@ bool CNetworkAndroid::GetHostName(std::string& hostname)
 
 std::vector<CNetworkInterface*>& CNetworkAndroid::GetInterfaceList()
 {
-  std::unique_lock<CCriticalSection> lock(m_refreshMutex);
-  return m_interfaces;
+  for(int i = 0; i < 100; i++){
+    if(true){
+      std::unique_lock<CCriticalSection> lock(m_refreshMutex);
+      if(!m_interfaces.empty()){
+          return m_interfaces;
+      }
+    }   
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    RetrieveInterfaces();
+  }
 }
 
 CNetworkInterface* CNetworkAndroid::GetFirstConnectedInterface()
