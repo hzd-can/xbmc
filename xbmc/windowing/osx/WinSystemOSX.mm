@@ -426,8 +426,7 @@ static void DisplayReconfigured(CGDirectDisplayID display,
   if (flags & kCGDisplayBeginConfigurationFlag)
   {
     // pre/post-reconfiguration changes
-    RESOLUTION res = CServiceBroker::GetWinSystem()->GetGfxContext().GetVideoResolution();
-    if (res == RES_INVALID)
+    if (!winsys->HasValidResolution())
       return;
 
     NSScreen* pScreen = nil;
@@ -536,7 +535,7 @@ void CWinSystemOSX::AnnounceOnResetDevice()
   // doing the callbacks
   GetScreenResolution(&w, &h, &currentFps, currentScreenIdx);
 
-  CServiceBroker::GetWinSystem()->GetGfxContext().SetFPS(currentFps);
+  m_gfxContext->SetFPS(currentFps);
 
   std::unique_lock<CCriticalSection> lock(m_resourceSection);
   // tell any shared resources
@@ -622,8 +621,7 @@ bool CWinSystemOSX::CreateNewWindow(const std::string& name, bool fullScreen, RE
     m_glView = m_appWindow.contentView;
   });
 
-  [m_glView.getGLContext makeCurrentContext];
-  [m_glView.getGLContext update];
+  [m_glView Update];
 
   NSScreen* currentScreen = [NSScreen mainScreen];
   dispatch_sync(dispatch_get_main_queue(), ^{
@@ -753,25 +751,6 @@ NSRect CWinSystemOSX::GetWindowDimensions()
   return frame;
 }
 
-#pragma mark - Window level
-
-void CWinSystemOSX::ToggleFloatOnTop()
-{
-  dispatch_sync(dispatch_get_main_queue(), ^{
-    if (!m_appWindow)
-      return;
-
-    if (m_appWindow.level == NSFloatingWindowLevel)
-    {
-      [m_appWindow setLevel:NSNormalWindowLevel];
-    }
-    else
-    {
-      [m_appWindow setLevel:NSFloatingWindowLevel];
-    }
-  });
-}
-
 #pragma mark - Resize Window
 
 bool CWinSystemOSX::ResizeWindow(int newWidth, int newHeight, int newLeft, int newTop)
@@ -806,7 +785,7 @@ bool CWinSystemOSX::ResizeWindow(int newWidth, int newHeight, int newLeft, int n
   if (view)
   {
     dispatch_sync(dispatch_get_main_queue(), ^{
-      [[view getGLContext] update];
+      [view Update];
     });
   }
 
@@ -828,6 +807,11 @@ bool CWinSystemOSX::SetFullScreen(bool fullScreen, RESOLUTION_INFO& res, bool bl
   m_nHeight = res.iHeight;
   const bool fullScreenState = m_bFullScreen;
   m_bFullScreen = fullScreen;
+
+  if (fullScreen || (!fullScreenState && m_fullscreenWillToggle))
+  {
+    UpdateSafeAreaInsets();
+  }
 
   //handle resolution/refreshrate switching early here
   if (m_bFullScreen)
@@ -860,30 +844,6 @@ bool CWinSystemOSX::SetFullScreen(bool fullScreen, RESOLUTION_INFO& res, bool bl
 
   if (m_bFullScreen)
   {
-    // This is Cocoa Windowed FullScreen Mode
-    // Get the screen rect of our current display
-    NSScreen* pScreen = [NSScreen.screens objectAtIndex:m_lastDisplayNr];
-
-    // Update safeareainsets (display may have a notch)
-    //! @TODO update code block once minimal SDK version is bumped to at least 12.0 (remove NSInvocation and selector)
-    auto safeAreaInsetsSelector = @selector(safeAreaInsets);
-    if ([pScreen respondsToSelector:safeAreaInsetsSelector])
-    {
-      NSEdgeInsets insets;
-      NSMethodSignature* safeAreaSignature =
-          [pScreen methodSignatureForSelector:safeAreaInsetsSelector];
-      NSInvocation* safeAreaInvocation =
-          [NSInvocation invocationWithMethodSignature:safeAreaSignature];
-      [safeAreaInvocation setSelector:safeAreaInsetsSelector];
-      [safeAreaInvocation invokeWithTarget:pScreen];
-      [safeAreaInvocation getReturnValue:&insets];
-
-      RESOLUTION currentRes = m_gfxContext->GetVideoResolution();
-      RESOLUTION_INFO resInfo = m_gfxContext->GetResInfo(currentRes);
-      resInfo.guiInsets = EdgeInsets(insets.right, insets.bottom, insets.left, insets.top);
-      m_gfxContext->SetResInfo(currentRes, resInfo);
-    }
-
     dispatch_sync(dispatch_get_main_queue(), ^{
       [window.contentView setFrameSize:NSMakeSize(m_nWidth, m_nHeight)];
       window.title = @"";
@@ -918,6 +878,33 @@ bool CWinSystemOSX::SetFullScreen(bool fullScreen, RESOLUTION_INFO& res, bool bl
   ResizeWindow(m_nWidth, m_nHeight, -1, -1);
 
   return true;
+}
+
+void CWinSystemOSX::UpdateSafeAreaInsets()
+{
+  // This is Cocoa Windowed FullScreen Mode
+  // Get the screen rect of our current display
+  NSScreen* pScreen = [NSScreen.screens objectAtIndex:m_lastDisplayNr];
+
+  // Update safeareainsets (display may have a notch)
+  //! @TODO update code block once minimal SDK version is bumped to at least 12.0 (remove NSInvocation and selector)
+  auto safeAreaInsetsSelector = @selector(safeAreaInsets);
+  if ([pScreen respondsToSelector:safeAreaInsetsSelector])
+  {
+    NSEdgeInsets insets;
+    NSMethodSignature* safeAreaSignature =
+        [pScreen methodSignatureForSelector:safeAreaInsetsSelector];
+    NSInvocation* safeAreaInvocation =
+        [NSInvocation invocationWithMethodSignature:safeAreaSignature];
+    [safeAreaInvocation setSelector:safeAreaInsetsSelector];
+    [safeAreaInvocation invokeWithTarget:pScreen];
+    [safeAreaInvocation getReturnValue:&insets];
+
+    RESOLUTION currentRes = m_gfxContext->GetVideoResolution();
+    RESOLUTION_INFO resInfo = m_gfxContext->GetResInfo(currentRes);
+    resInfo.guiInsets = EdgeInsets(insets.right, insets.bottom, insets.left, insets.top);
+    m_gfxContext->SetResInfo(currentRes, resInfo);
+  }
 }
 
 #pragma mark - Resolution
@@ -960,6 +947,11 @@ void CWinSystemOSX::GetScreenResolution(size_t* w, size_t* h, double* fps, unsig
     // NOTE: The refresh rate will be REPORTED AS 0 for many DVI and notebook displays.
     *fps = 60.0;
   }
+}
+
+bool CWinSystemOSX::HasValidResolution() const
+{
+  return m_gfxContext->GetVideoResolution() != RES_INVALID;
 }
 
 #pragma mark - Video Modes
@@ -1074,7 +1066,7 @@ void CWinSystemOSX::FillInVideoModes()
         {
           UpdateDesktopResolution(res, (dispName != nil) ? [dispName UTF8String] : "Unknown",
                                   static_cast<int>(w), static_cast<int>(h), refreshrate, 0);
-          CServiceBroker::GetWinSystem()->GetGfxContext().ResetOverscan(res);
+          m_gfxContext->ResetOverscan(res);
           CDisplaySettings::GetInstance().AddResolutionInfo(res);
         }
       }
@@ -1161,12 +1153,23 @@ CGLContextObj CWinSystemOSX::GetCGLContextObj()
   if (m_appWindow)
   {
     dispatch_sync(dispatch_get_main_queue(), ^{
-      OSXGLView* contentView = m_appWindow.contentView;
-      cglcontex = contentView.getGLContext.CGLContextObj;
+      cglcontex = [(OSXGLView*)m_appWindow.contentView getGLContextObj];
     });
   }
 
   return cglcontex;
+}
+
+CGraphicContext& CWinSystemOSX::GetGfxContext() const
+{
+  if (m_glView)
+  {
+    dispatch_sync(dispatch_get_main_queue(), ^{
+      [m_glView NotifyContext];
+    });
+  }
+
+  return CWinSystemBase::GetGfxContext();
 }
 
 bool CWinSystemOSX::FlushBuffer()
@@ -1174,9 +1177,7 @@ bool CWinSystemOSX::FlushBuffer()
   if (m_appWindow)
   {
     dispatch_sync(dispatch_get_main_queue(), ^{
-      OSXGLView* contentView = m_appWindow.contentView;
-      NSOpenGLContext* glcontex = contentView.getGLContext;
-      [glcontex flushBuffer];
+      [m_appWindow.contentView FlushBuffer];
     });
   }
 
@@ -1260,14 +1261,20 @@ bool CWinSystemOSX::HasCursor()
 
 void CWinSystemOSX::signalMouseEntered()
 {
-  m_hasCursor = true;
-  m_winEvents->signalMouseEntered();
+  if (m_appWindow.keyWindow)
+  {
+    m_hasCursor = true;
+    m_winEvents->signalMouseEntered();
+  }
 }
 
 void CWinSystemOSX::signalMouseExited()
 {
-  m_hasCursor = false;
-  m_winEvents->signalMouseExited();
+  if (m_appWindow.keyWindow)
+  {
+    m_hasCursor = false;
+    m_winEvents->signalMouseExited();
+  }
 }
 
 void CWinSystemOSX::SendInputEvent(NSEvent* nsEvent)

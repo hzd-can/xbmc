@@ -136,13 +136,25 @@ ifeq ($(OS),linux)
     DEPENDS += wayland waylandpp wayland-protocols webos-wayland-extensions webos-userland
     EXCLUDED_DEPENDS += dbus libcec linux-system-x11-libs pipewire mesa
   endif
-endif
 
+  ifneq (,$(findstring gbm,$(TARGET_PLATFORM)))
+    DEPENDS += hwdata libdisplay-info
+  endif
+endif
 DEPENDS := $(filter-out $(EXCLUDED_DEPENDS),$(DEPENDS))
 
-.PHONY: $(DEPENDS)
+.PHONY: $(DEPENDS) download $(DOWNLOAD_TARGETS)
 
 all: .installed-$(PLATFORM)
+
+EXCLUDE := linux-system-gl-libs linux-system-x11-libs
+DOWNLOAD_DEPS := $(filter-out $(EXCLUDE:%=%), $(DEPENDS))
+DOWNLOAD_TARGETS := $(addprefix download/, $(DOWNLOAD_DEPS))
+
+$(DOWNLOAD_TARGETS):
+	$(MAKE) -C $(notdir $@) download
+
+download: $(DOWNLOAD_TARGETS)
 
 crossguid: $(LIBUUID)
 curl: openssl nghttp2
@@ -160,6 +172,7 @@ libbluray: fontconfig freetype2 $(ICONV) udfread libxml2
 libcdio-gplv3: $(ICONV)
 libcdio: $(ICONV)
 libcec: p8-platform
+libdisplay-info: meson-cross-file hwdata
 libdrm: meson-cross-file
 libevdev: libudev
 libgcrypt: libgpg-error

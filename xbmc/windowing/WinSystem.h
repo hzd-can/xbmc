@@ -79,13 +79,6 @@ public:
   //the number of presentation buffers
   virtual int NoOfBuffers();
 
-  /*!
-   * @brief Toggle Float on Top
-   *
-   * @details Used to keep the application window on top of all other windows regardless of being the one
-   * receiving input (or focused).
-  */
-  virtual void ToggleFloatOnTop(){};
   /**
    * Get average display latency
    *
@@ -168,7 +161,7 @@ public:
   virtual bool MessagePump() { return false; }
 
   // Access render system interface
-  CGraphicContext& GetGfxContext();
+  virtual CGraphicContext& GetGfxContext() const;
 
   /**
    * Get OS specific hardware context

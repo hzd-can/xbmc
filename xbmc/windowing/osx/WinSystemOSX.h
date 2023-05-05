@@ -57,6 +57,8 @@ public:
   bool HasCursor() override;
   bool Show(bool raise = true) override;
   void OnMove(int x, int y) override;
+  CGraphicContext& GetGfxContext() const override;
+  bool HasValidResolution() const;
 
   std::string GetClipboardText() override;
 
@@ -73,8 +75,6 @@ public:
 
   void Register(IDispResource* resource) override;
   void Unregister(IDispResource* resource) override;
-
-  void ToggleFloatOnTop() override;
 
   std::unique_ptr<CVideoSync> GetVideoSync(void* clock) override;
 
@@ -113,6 +113,7 @@ protected:
   bool SwitchToVideoMode(int width, int height, double refreshrate);
   void FillInVideoModes();
   bool FlushBuffer();
+  void UpdateSafeAreaInsets();
 
   bool DestroyWindowInternal();
 
