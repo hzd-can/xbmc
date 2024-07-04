@@ -446,6 +446,40 @@ void UnblankDisplays(void)
       blankingWindows[i] = 0;
     }
   }
+  [curtainWindow close];
+  curtainWindow = nil;
+}
+
+void fadeOutDisplay(NSScreen* theScreen, double fadeTime)
+{
+  int fadeSteps = 100;
+  double fadeInterval = (fadeTime / (double)fadeSteps);
+
+  [NSCursor hide];
+
+  curtainWindow = [[NSWindow alloc] initWithContentRect:[theScreen frame]
+                                              styleMask:NSWindowStyleMaskBorderless
+                                                backing:NSBackingStoreBuffered
+                                                  defer:YES
+                                                 screen:theScreen];
+
+  [curtainWindow setAlphaValue:0.0];
+  [curtainWindow setBackgroundColor:NSColor.blackColor];
+  [curtainWindow setLevel:NSScreenSaverWindowLevel];
+
+  [curtainWindow makeKeyAndOrderFront:nil];
+  [curtainWindow setFrame:[curtainWindow frameRectForContentRect:[theScreen frame]]
+                  display:YES
+                  animate:NO];
+
+  for (int step = 0; step < fadeSteps; step++)
+  {
+    double fade = step * fadeInterval;
+    [curtainWindow setAlphaValue:fade];
+
+    NSDate* nextDate = [NSDate dateWithTimeIntervalSinceNow:fadeInterval];
+    [NSRunLoop.currentRunLoop runUntilDate:nextDate];
+  }
 }
 
 #pragma mark - Fade Display
@@ -745,8 +779,6 @@ bool CWinSystemOSX::CreateNewWindow(const std::string& name, bool fullScreen, RE
     m_bWindowCreated = true;
   }
 
-  CheckAndUpdateCurrentMonitor(m_lastDisplayNr);
-
   // warning, we can order front but not become
   // key window or risk starting up with bad flicker
   // becoming key window must happen in completion block.
@@ -762,11 +794,6 @@ bool CWinSystemOSX::CreateNewWindow(const std::string& name, bool fullScreen, RE
   GetScreenResolution(&dummy, &dummy, &m_refreshRate, m_lastDisplayNr);
 
   // register platform dependent objects
-  CDVDFactoryCodec::ClearHWAccels();
-  VTB::CDecoder::Register();
-  VIDEOPLAYER::CRendererFactory::ClearRenderer();
-  CLinuxRendererGL::Register();
-  CRendererVTB::Register();
   VIDEOPLAYER::CProcessInfoOSX::Register();
   RETRO::CRPProcessInfoOSX::Register();
   RETRO::CRPProcessInfoOSX::RegisterRendererFactory(new RETRO::CRendererFactoryOpenGL);
@@ -1234,13 +1261,9 @@ void CWinSystemOSX::OnMove(int x, int y)
     CServiceBroker::GetAppMessenger()->PostMsg(TMSG_VIDEORESIZE, frame.size.width,
                                                frame.size.height);
   }
-  if (m_fullScreenMovingToScreen.has_value())
-  {
-    CServiceBroker::GetAppMessenger()->PostMsg(TMSG_TOGGLEFULLSCREEN);
-  }
 }
 
-void CWinSystemOSX::OnChangeScreen(unsigned int screenIdx)
+void CWinSystemOSX::WindowChangedScreen()
 {
   // user has moved the window to a
   // different screen
